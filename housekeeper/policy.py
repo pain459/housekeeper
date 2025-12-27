@@ -8,7 +8,7 @@ from typing import Literal
 Risk = Literal["read_only", "safe", "disruptive", "blocked"]
 
 
-@dataclass
+@dataclass(frozen=True)
 class PolicyDecision:
     risk: Risk
     reason: str
@@ -16,20 +16,25 @@ class PolicyDecision:
 
 class CommandPolicy:
     """
-    v1 policy:
-    - allowlist common safe read-only tools
-    - allow some safe cleanup/update commands as "safe" or "disruptive"
-    - block dangerous patterns
+    Conservative command policy.
+
+    Design principles:
+    - Audit collectors may run read-only commands automatically.
+    - Apply will only execute commands that are allowlisted here,
+      and only after user confirmation (handled by apply layer).
+    - 'sudo' is supported, but only for a tight allowlist of subcommands.
     """
 
+    # Block obvious foot-guns and "download & execute" patterns
     BLOCK_PATTERNS = [
-        r"\brm\b.*\s-.*r",             # rm -r / -rf patterns
-        r"\bdd\b",
-        r"\bmkfs\b",
-        r"\bchmod\b\s+777\b",
-        r"\bchown\b\s+-R\b",
-        r"\bcurl\b.*\|\s*(sh|bash)",
-        r"\bwget\b.*\|\s*(sh|bash)",
+        r"\brm\b.*\s-(?:rf|fr|r)\b",         # rm -r / -rf / -fr
+        r"\bdd\b",                          # raw disk writes
+        r"\bmkfs(\.\w+)?\b",                # formatting filesystems
+        r"\bmount\b.*\s-o\s+.*\b",          # mounting with options (too broad for v1)
+        r"\bchmod\b\s+777\b",               # insecure perms
+        r"\bchown\b\s+-R\b",                # recursive ownership changes
+        r"\bcurl\b.*\|\s*(sh|bash)\b",      # curl | sh
+        r"\bwget\b.*\|\s*(sh|bash)\b",      # wget | sh
         r"\b:\(\)\s*\{\s*:\|\:&\s*\};:\b",  # fork bomb
     ]
 
@@ -39,15 +44,29 @@ class CommandPolicy:
         "apt", "apt-get",
     }
 
-    def classify(self, cmd: list[str]) -> PolicyDecision:
-        s = " ".join(cmd).strip()
+    # Package-changing apt operations (always disruptive)
+    APT_MUTATING = {"install", "remove", "purge", "upgrade", "dist-upgrade", "full-upgrade"}
 
+    # systemctl operations that can disrupt services
+    SYSTEMCTL_MUTATING = {"restart", "stop", "disable", "mask", "enable"}
+
+    # ufw operations that mutate firewall state/rules
+    UFW_MUTATING = {"enable", "disable", "reset", "delete", "allow", "deny", "reject", "limit", "insert", "route"}
+
+    def _blocked_by_pattern(self, s: str) -> str | None:
         for pat in self.BLOCK_PATTERNS:
             if re.search(pat, s):
-                return PolicyDecision("blocked", f"Blocked by pattern: {pat}")
+                return pat
+        return None
 
+    def classify(self, cmd: list[str]) -> PolicyDecision:
         if not cmd:
             return PolicyDecision("blocked", "Empty command")
+
+        s = " ".join(cmd).strip()
+        pat = self._blocked_by_pattern(s)
+        if pat:
+            return PolicyDecision("blocked", f"Blocked by pattern: {pat}")
 
         exe = cmd[0]
 
@@ -57,39 +76,52 @@ class CommandPolicy:
                 return PolicyDecision("blocked", "sudo without subcommand")
 
             sub = cmd[1]
+            subcmd = cmd[2] if len(cmd) >= 3 else None
 
             # sudo apt / apt-get
             if sub in ("apt", "apt-get"):
-                # disruptive if it changes packages (upgrade/install/remove)
-                if any(x in cmd for x in ["install", "remove", "purge", "upgrade", "dist-upgrade", "full-upgrade"]):
+                # If any mutating token appears anywhere, treat as disruptive
+                if any(tok in self.APT_MUTATING for tok in cmd):
                     return PolicyDecision("disruptive", "Package changes require approval")
-                # apt update, apt-get -f install, etc.
                 return PolicyDecision("safe", "sudo apt operation (approval required)")
 
-            # sudo journalctl vacuum
-            if sub == "journalctl" and "--vacuum-time" in cmd:
-                return PolicyDecision("safe", "Log vacuum (approval required)")
+            # sudo journalctl vacuum (time- or size-based)
+            if sub == "journalctl":
+                if "--vacuum-time" in cmd or "--vacuum-size" in cmd:
+                    return PolicyDecision("safe", "Log vacuum (approval required)")
+                # Keep other sudo journalctl usages blocked for v1
+                return PolicyDecision("blocked", "sudo journalctl allowed only with --vacuum-time/--vacuum-size")
 
             # sudo fstrim
             if sub == "fstrim":
                 return PolicyDecision("safe", "SSD TRIM (approval required)")
 
-            # (Optional) sudo ufw (if you want firewall actions)
+            # sudo ufw
             if sub == "ufw":
-                return PolicyDecision("disruptive", "Firewall changes require approval")
+                # read-only status/show should be safe
+                if subcmd in ("status", "status-numbered", "show"):
+                    return PolicyDecision("safe", "Firewall status check (approval required)")
+                # anything that changes state/rules is disruptive
+                if any(tok in self.UFW_MUTATING for tok in cmd):
+                    return PolicyDecision("disruptive", "Firewall rule changes require approval")
+                # default to disruptive if we can't be sure
+                return PolicyDecision("disruptive", "Firewall operation requires approval")
 
             return PolicyDecision("blocked", f"sudo subcommand not allowlisted: {sub}")
-        # ---- existing logic ----
+
+        # ---- non-sudo allowlist ----
         if exe in self.READ_ONLY_ALLOW:
             if exe in ("apt", "apt-get"):
-                if any(x in cmd for x in ["install", "remove", "purge", "upgrade", "dist-upgrade"]):
+                # non-sudo package changes are still disruptive (though they may fail without sudo)
+                if any(tok in self.APT_MUTATING for tok in cmd):
                     return PolicyDecision("disruptive", "Package changes require approval")
                 return PolicyDecision("read_only", "Read-only package query")
 
-            if exe == "systemctl" and any(x in cmd for x in ["restart", "stop", "disable", "mask"]):
-                return PolicyDecision("disruptive", "Service changes require approval")
+            if exe == "systemctl":
+                if any(tok in self.SYSTEMCTL_MUTATING for tok in cmd):
+                    return PolicyDecision("disruptive", "Service changes require approval")
+                return PolicyDecision("read_only", "Read-only systemctl query")
 
             return PolicyDecision("read_only", "Read-only command")
 
         return PolicyDecision("blocked", f"Executable not allowlisted: {exe}")
-

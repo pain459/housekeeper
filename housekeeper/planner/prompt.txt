@@ -32,3 +32,11 @@ APT command rules (must follow):
 - For "dry-run update readiness" use: `apt-get -s dist-upgrade` (or `apt-get -s upgrade`).
 - It is OK to propose `sudo apt update` as a safe metadata refresh (non-destructive).
 - Prefer `apt-get -s dist-upgrade` before any real upgrade.
+
+APT planning rules:
+- Label `apt update` as "Refresh package lists" (not simulation).
+- Use `apt-get -s upgrade` or `apt-get -s dist-upgrade` when referring to simulation.
+
+Journal vacuum guidance:
+- Prefer --vacuum-time=14d (default) unless disk pressure is high.
+- Only suggest 2d if root filesystem usage is critically high (e.g., >90%).
