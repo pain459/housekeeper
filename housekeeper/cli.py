@@ -19,6 +19,10 @@ from .collectors.apt import collect_apt
 from .collectors.disk import collect_disk
 from .collectors.security import collect_security
 from .collectors.systemd import collect_systemd
+from .collectors.reboot import collect_reboot_required
+from .collectors.pkg_health import collect_pkg_health
+from .collectors.maintenance import collect_maintenance
+from .normalize import normalize
 
 app = typer.Typer(no_args_is_help=True)
 console = Console()
@@ -32,6 +36,9 @@ def build_audit() -> dict:
         "disk": collect_disk(sh),
         "systemd": collect_systemd(sh),
         "security": collect_security(sh),
+        "reboot": collect_reboot_required(),
+        "pkg_health": collect_pkg_health(sh),
+        "maintenance": collect_maintenance(sh),
     }
     return audit
 
@@ -144,6 +151,12 @@ def apply(
         console.print("\n" + "-" * 80)
         console.print(f"[bold]{title}[/bold]  (risk: {risk})")
         console.print(action.get("rationale", ""))
+
+        for argv in commands:
+            argv2, note = normalize(argv)
+            if note:
+                console.print(f"    [yellow]normalize:[/yellow] {note}")
+                argv = argv2
 
         # Show commands + policy decisions
         for argv in commands:

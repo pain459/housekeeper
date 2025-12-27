@@ -26,3 +26,9 @@ Rules:
 - Never use shell pipelines. Provide argv arrays only.
 - For apt changes: include a simulation step before any upgrade step.
 - Keep actions minimal and high-value.
+
+APT command rules (must follow):
+- Do not use simulation flag (-s/--simulate) with `apt update` or `apt-get update` (invalid).
+- For "dry-run update readiness" use: `apt-get -s dist-upgrade` (or `apt-get -s upgrade`).
+- It is OK to propose `sudo apt update` as a safe metadata refresh (non-destructive).
+- Prefer `apt-get -s dist-upgrade` before any real upgrade.

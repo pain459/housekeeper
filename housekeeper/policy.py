@@ -51,33 +51,34 @@ class CommandPolicy:
 
         exe = cmd[0]
 
-        # ---- NEW: controlled sudo support ----
+        # ---- controlled sudo support ----
         if exe == "sudo":
             if len(cmd) < 2:
                 return PolicyDecision("blocked", "sudo without subcommand")
 
             sub = cmd[1]
 
-            # allow sudo apt / apt-get
+            # sudo apt / apt-get
             if sub in ("apt", "apt-get"):
-                if any(x in cmd for x in ["install", "remove", "purge", "upgrade", "dist-upgrade"]):
+                # disruptive if it changes packages (upgrade/install/remove)
+                if any(x in cmd for x in ["install", "remove", "purge", "upgrade", "dist-upgrade", "full-upgrade"]):
                     return PolicyDecision("disruptive", "Package changes require approval")
-                return PolicyDecision("safe", "sudo apt read-only or metadata operation")
+                # apt update, apt-get -f install, etc.
+                return PolicyDecision("safe", "sudo apt operation (approval required)")
 
-            # allow sudo ufw
-            if sub == "ufw":
-                return PolicyDecision("disruptive", "Firewall changes require approval")
-
-            # allow sudo journalctl vacuum
+            # sudo journalctl vacuum
             if sub == "journalctl" and "--vacuum-time" in cmd:
                 return PolicyDecision("safe", "Log vacuum (approval required)")
 
-            # allow sudo fstrim
+            # sudo fstrim
             if sub == "fstrim":
                 return PolicyDecision("safe", "SSD TRIM (approval required)")
 
-            return PolicyDecision("blocked", f"sudo subcommand not allowlisted: {sub}")
+            # (Optional) sudo ufw (if you want firewall actions)
+            if sub == "ufw":
+                return PolicyDecision("disruptive", "Firewall changes require approval")
 
+            return PolicyDecision("blocked", f"sudo subcommand not allowlisted: {sub}")
         # ---- existing logic ----
         if exe in self.READ_ONLY_ALLOW:
             if exe in ("apt", "apt-get"):
