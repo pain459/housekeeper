@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "housekeeper"
+version = "0.1.0"
+description = "Terminal housekeeping assistant with audit -> AI plan -> user-approved execution"
+requires-python = ">=3.10"
+
+dependencies = [
+  "typer>=0.12.0",
+  "rich>=13.7.0",
+  "pydantic>=2.7.0",
+  "openai>=1.0.0",
+  "python-dotenv>=1.0.1",
+]
+
+[project.scripts]
+housekeeper = "housekeeper.cli:app"
+
+# ---- setuptools configuration ----
+# Explicitly tell setuptools which packages to include
+# so it ignores the top-level `systemd/` directory
+[tool.setuptools.packages.find]
+include = ["housekeeper*"]
+exclude = ["systemd*"]

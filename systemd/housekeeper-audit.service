@@ -1,0 +1,7 @@
+[Unit]
+Description=Housekeeper daily audit (read-only)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/housekeeper/venv/bin/housekeeper audit
